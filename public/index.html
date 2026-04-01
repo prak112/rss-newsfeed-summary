@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>RSS News Feed Summary</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header>
+    <div class="header-inner">
+      <h1>
+        <span class="icon">📡</span>
+        RSS News Feed Summary
+      </h1>
+      <p class="subtitle">Top stories – <em>curated &amp; categorised</em></p>
+    </div>
+  </header>
+
+  <nav class="tab-bar" role="tablist">
+    <button class="tab active" data-type="tech" role="tab" aria-selected="true">
+      💻 Tech News
+    </button>
+    <button class="tab" data-type="general" role="tab" aria-selected="false">
+      🌍 General News
+    </button>
+  </nav>
+
+  <main id="main-content">
+    <div id="loading" class="loading" aria-live="polite">
+      <div class="spinner"></div>
+      <p>Fetching latest stories…</p>
+    </div>
+
+    <div id="error-box" class="error-box hidden" role="alert">
+      <span id="error-msg"></span>
+      <button id="retry-btn" class="retry-btn">↻ Retry</button>
+    </div>
+
+    <section id="news-grid" class="news-grid" aria-label="News stories"></section>
+  </main>
+
+  <footer>
+    <p>Feeds refresh on each page load &nbsp;·&nbsp; Sources: The Hacker News, TechCrunch, Hackaday, O'Reilly, BBC, CNN, Yle, Helsinki Times, Daily Finland</p>
+  </footer>
+
+  <script>
+    // ── Category metadata ────────────────────────────────────────────────────
+    /** @type {Record<string, {label: string, icon: string, cls: string}>} */
+    const CATEGORY_META = {
+      'must-know':    { label: 'Must Know',    icon: '🔴', cls: 'must-know'    },
+      'good-to-know': { label: 'Good to Know', icon: '🟡', cls: 'good-to-know' },
+      'general-bs':   { label: 'General BS',   icon: '🟢', cls: 'general-bs'   },
+    };
+
+    // ── DOM helpers ──────────────────────────────────────────────────────────
+    const $ = (/** @type {string} */ sel) => document.querySelector(sel);
+
+    function show(el) { el.classList.remove('hidden'); }
+    function hide(el) { el.classList.add('hidden'); }
+
+    /** Format ISO/RFC date to readable string */
+    function formatDate(dateStr) {
+      if (!dateStr) return '';
+      try {
+        return new Date(dateStr).toLocaleString(undefined, {
+          day: 'numeric', month: 'short', year: 'numeric',
+          hour: '2-digit', minute: '2-digit',
+        });
+      } catch {
+        return dateStr;
+      }
+    }
+
+    /** Escape HTML to prevent injection */
+    function esc(str) {
+      return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+    }
+
+    // ── Card builder ─────────────────────────────────────────────────────────
+    /**
+     * @param {{ title: string, summary: string, link: string, pubDate: string, source: string, category: string }} item
+     */
+    function buildCard(item) {
+      const meta = CATEGORY_META[item.category] ?? CATEGORY_META['general-bs'];
+      const article = document.createElement('article');
+      article.className = `card ${meta.cls}`;
+      article.setAttribute('aria-label', meta.label);
+
+      article.innerHTML = `
+        <div class="card-badge">
+          <span class="badge-icon">${meta.icon}</span>
+          <span class="badge-label">${esc(meta.label)}</span>
+        </div>
+        <div class="card-body">
+          <h2 class="card-title">${esc(item.title)}</h2>
+          <p class="tldr-label">TLDR;</p>
+          <p class="card-summary">${esc(item.summary || 'No summary available.')}</p>
+        </div>
+        <div class="card-footer">
+          <span class="card-source">📰 ${esc(item.source)}</span>
+          <span class="card-date">${esc(formatDate(item.pubDate))}</span>
+          <a class="card-link" href="${esc(item.link)}" target="_blank" rel="noopener noreferrer">
+            Read full story →
+          </a>
+        </div>
+      `;
+      return article;
+    }
+
+    // ── Fetch & render ───────────────────────────────────────────────────────
+    let currentType = 'tech';
+
+    async function loadNews(type) {
+      currentType = type;
+      const grid = $('#news-grid');
+      const loading = $('#loading');
+      const errorBox = $('#error-box');
+
+      grid.innerHTML = '';
+      const errorMsgEl = document.getElementById('error-msg');
+      if (errorMsgEl) errorMsgEl.textContent = '';
+      hide(errorBox);
+      show(loading);
+
+      try {
+        const response = await fetch(`/api/news/${type}`);
+        const data = await response.json();
+
+        if (!data.success || !Array.isArray(data.items)) {
+          throw new Error(data.error || 'Unexpected response from server.');
+        }
+
+        if (data.items.length === 0) {
+          grid.innerHTML = '<p class="no-results">No stories found. Try again later.</p>';
+        } else {
+          const order = ['must-know', 'good-to-know', 'general-bs'];
+          const sorted = [...data.items].sort(
+            (a, b) => order.indexOf(a.category) - order.indexOf(b.category)
+          );
+          sorted.forEach((item) => grid.appendChild(buildCard(item)));
+        }
+      } catch (err) {
+        const errorMsgEl = document.getElementById('error-msg');
+        if (errorMsgEl) errorMsgEl.textContent = `⚠️ ${err.message || 'Failed to load news. Please try again.'}`;
+        show(errorBox);
+      } finally {
+        hide(loading);
+      }
+    }
+
+    // ── Tab switching ────────────────────────────────────────────────────────
+    document.querySelectorAll('.tab').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        document.querySelectorAll('.tab').forEach((t) => {
+          t.classList.remove('active');
+          t.setAttribute('aria-selected', 'false');
+        });
+        btn.classList.add('active');
+        btn.setAttribute('aria-selected', 'true');
+        loadNews(btn.dataset.type);
+      });
+    });
+
+    // ── Retry button ──────────────────────────────────────────────────────────
+    document.getElementById('retry-btn').addEventListener('click', () => {
+      loadNews(currentType);
+    });
+
+    // ── Initial load ─────────────────────────────────────────────────────────
+    loadNews('tech');
+  </script>
+</body>
+</html>
